@@ -47,6 +47,7 @@ dict_templ = {
     'branch': Placeholder('ceph_branch'),
     'sha1': Placeholder('ceph_hash'),
     'teuthology_branch': Placeholder('teuthology_branch'),
+    'teuthology_sha1': Placeholder('teuthology_sha1'),
     'archive_upload': Placeholder('archive_upload'),
     'archive_upload_key': Placeholder('archive_upload_key'),
     'machine_type': Placeholder('machine_type'),
@@ -67,10 +68,8 @@ dict_templ = {
                     'debug mgr': 20,
                     'debug ms': 1},
                 'osd': {
-                    'debug filestore': 20,
-                    'debug journal': 20,
-                    'debug ms': 20,
-                    'debug osd': 25
+                    'debug ms': 1,
+                    'debug osd': 20
                 }
             },
             'log-whitelist': ['\(MDS_ALL_DOWN\)',

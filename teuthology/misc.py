@@ -16,6 +16,9 @@ import yaml
 import json
 import re
 import pprint
+import datetime
+
+from tarfile import ReadError
 
 from teuthology.util.compat import urljoin, urlopen, HTTPError
 
@@ -32,7 +35,6 @@ from teuthology.orchestra.opsys import DEFAULT_OS_VERSION
 
 log = logging.getLogger(__name__)
 
-import datetime
 stamp = datetime.datetime.now().strftime("%y%m%d%H%M")
 
 is_arm = lambda x: x.startswith('tala') or x.startswith(
@@ -1020,7 +1022,7 @@ def deep_merge(a, b):
     return b
 
 
-def get_valgrind_args(testdir, name, preamble, v):
+def get_valgrind_args(testdir, name, preamble, v, exit_on_first_error=True):
     """
     Build a command line for running valgrind.
 
@@ -1045,28 +1047,31 @@ def get_valgrind_args(testdir, name, preamble, v):
             'valgrind',
             '--trace-children=no',
             '--child-silent-after-fork=yes',
+            '--soname-synonyms=somalloc=*tcmalloc*',
             '--num-callers=50',
             '--suppressions={tdir}/valgrind.supp'.format(tdir=testdir),
             '--xml=yes',
             '--xml-file={vdir}/{n}.log'.format(vdir=val_path, n=name),
             '--time-stamp=yes',
             '--vgdb=yes',
-            # at least Valgrind 3.14 is required
-            '--exit-on-first-error=yes',
-            '--error-exitcode=42',
         ]
     else:
         extra_args = [
             'valgrind',
             '--trace-children=no',
             '--child-silent-after-fork=yes',
+            '--soname-synonyms=somalloc=*tcmalloc*',
             '--suppressions={tdir}/valgrind.supp'.format(tdir=testdir),
             '--log-file={vdir}/{n}.log'.format(vdir=val_path, n=name),
             '--time-stamp=yes',
             '--vgdb=yes',
+        ]
+    if exit_on_first_error:
+        extra_args.extend([
+            # at least Valgrind 3.14 is required
             '--exit-on-first-error=yes',
             '--error-exitcode=42',
-        ]
+        ])
     args = [
         'cd', testdir,
         run.Raw('&&'),
@@ -1324,3 +1329,52 @@ def sh(command, log_limit=1024, cwd=None, env=None):
             output=output
         )
     return output
+
+
+def add_remote_path(ctx, local_dir, remote_dir):
+    """
+    Add key/value pair (local_dir: remote_dir) to job's info.yaml.
+    These key/value pairs are read to archive them in case of job timeout.
+    """
+    if ctx.archive is None:
+        return
+    with open(os.path.join(ctx.archive, 'info.yaml'), 'r+') as info_file:
+        info_yaml = yaml.safe_load(info_file)
+        info_file.seek(0)
+        if 'archive' in info_yaml:
+            info_yaml['archive'][local_dir] = remote_dir
+        else:
+            info_yaml['archive'] = {local_dir: remote_dir}
+        yaml.safe_dump(info_yaml, info_file, default_flow_style=False)
+
+
+def archive_logs(ctx, remote_path, log_path):
+    """
+    Archive directories from all nodes in a cliuster. It pulls all files in
+    remote_path dir to job's archive dir under log_path dir.
+    """
+    if ctx.archive is None:
+        return
+    path = os.path.join(ctx.archive, 'remote')
+    os.makedirs(path, exist_ok=True)
+    for remote in ctx.cluster.remotes.keys():
+        sub = os.path.join(path, remote.shortname)
+        os.makedirs(sub, exist_ok=True)
+        try:
+            pull_directory(remote, remote_path, os.path.join(sub, log_path))
+        except ReadError:
+            pass
+
+
+def compress_logs(ctx, remote_dir):
+    """
+    Compress all files in remote_dir from all nodes in a cluster.
+    """
+    log.info('Compressing logs...')
+    run.wait(
+        ctx.cluster.run(
+            args=(f"sudo find {remote_dir} -name *.log -print0 | "
+                  f"sudo xargs -0 --no-run-if-empty -- gzip --"),
+            wait=False,
+        ),
+    )
